@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>VbKnowledgeGraph</RootNamespace>
+    <AssemblyName>vb-knowledge-graph</AssemblyName>
+    <Version>0.1.0</Version>
+    <Authors>J.C. Kirwin</Authors>
+    <Description>MCP server for navigating VB.NET codebases via a Roslyn-backed knowledge graph.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/JCKirwin/vb-knowledge-graph-mcp</RepositoryUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.VisualBasic" Version="5.*" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
+    <PackageReference Include="ModelContextProtocol" Version="1.*" />
+  </ItemGroup>
+
+</Project>
