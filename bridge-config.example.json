@@ -1,0 +1,27 @@
+{
+  // Set false to keep the bridge classes loaded but no-op at startup.
+  "enabled": true,
+
+  // Path to the sibling C# knowledge-graph SQLite DB (e.g. codebase-memory-mcp).
+  // The DB is opened READ-ONLY — vb-knowledge-graph never writes to it.
+  "cmmDbPath": "C:/Users/me/.cache/codebase-memory-mcp/MyProject.db",
+
+  // The project key used in the sibling DB's `nodes.project` column.
+  "cmmProjectKey": "C-Projects-MyProject",
+
+  // SQL LIKE patterns selecting which VB.NET `Imports` namespaces to bridge.
+  // Use this to skip framework imports that have no local C# nodes.
+  // Default if omitted: ["%"] (all imports).
+  "namespaceFilters": [
+    "MyCompany.%",
+    "MyApp.%"
+  ],
+
+  // Which C# node labels (from the sibling DB's `nodes.label` column) to map.
+  // Default: ["Class", "Interface", "Enum"].
+  "csharpLabels": [
+    "Class",
+    "Interface",
+    "Enum"
+  ]
+}

@@ -68,8 +68,35 @@ The binary lands at `bin/Release/net10.0/vb-knowledge-graph.dll`.
 | `--repo-path <path>` | Root directory to scan recursively for `*.vb` files | `$VB_ROOT_PATH` env var, then current working directory |
 | `--db-path <path>` | SQLite index location | `$VB_DB_PATH` env var, then `~/.cache/vb-knowledge-graph/vb-index.db` |
 | `--reindex` | Force full re-index on startup (clears existing index) | — |
+| `--bridge-config <path>` | Path to optional cross-language bridge JSON (see below) | `$VB_BRIDGE_CONFIG` env var |
 
 The first run auto-indexes; subsequent runs reuse the cached DB. Use `--reindex` after large refactors, or call the `reindex_vb` MCP tool from your agent session.
+
+### Cross-language bridge (optional)
+
+VB.NET projects often delegate to a C# layer reachable through `Imports`. If you also run a C# knowledge-graph MCP server (e.g. [codebase-memory-mcp](https://github.com/anthropics/codebase-memory-mcp)) that writes its index to a sibling SQLite DB with a `nodes(project, label, qualified_name, name, file_path)` schema, you can wire the two graphs together.
+
+Pass `--bridge-config <path>` (or set `VB_BRIDGE_CONFIG`). The file is JSON; see [`bridge-config.example.json`](bridge-config.example.json):
+
+```jsonc
+{
+  "enabled": true,
+  "cmmDbPath": "C:/Users/me/.cache/codebase-memory-mcp/MyProject.db",
+  "cmmProjectKey": "C-Projects-MyProject",
+  "namespaceFilters": ["MyCompany.%", "MyApp.%"],
+  "csharpLabels": ["Class", "Interface", "Enum"]
+}
+```
+
+When enabled, the server opens the sibling DB **read-only** and populates a local `bridge_mappings` table that maps each VB.NET import namespace to the matching C# nodes. This unlocks two extra tools:
+
+| Tool | Purpose |
+|---|---|
+| `bridge_vb_imports` | List C# types reachable from a VB.NET file or type via its `Imports` |
+| `trace_vb_calls` | Heuristic cross-language call trace for a Sub/Function/Class |
+| `rebuild_vb_bridge` | Rebuild bridge mappings after the sibling graph is re-indexed |
+
+If `--bridge-config` is omitted, the bridge is disabled and these tools return a one-line hint instead of erroring. The core seven tools above work either way.
 
 ---
 

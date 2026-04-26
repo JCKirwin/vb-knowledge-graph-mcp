@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>VbKnowledgeGraph</RootNamespace>
     <AssemblyName>vb-knowledge-graph</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>J.C. Kirwin</Authors>
     <Description>MCP server for navigating VB.NET codebases via a Roslyn-backed knowledge graph.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

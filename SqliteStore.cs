@@ -75,6 +75,19 @@ public sealed class SqliteStore : IDisposable
             );
 
             CREATE INDEX IF NOT EXISTS idx_imports_ns ON imports(namespace);
+
+            CREATE TABLE IF NOT EXISTS bridge_mappings (
+                id INTEGER PRIMARY KEY,
+                vb_import_namespace TEXT NOT NULL,
+                csharp_node_id INTEGER NOT NULL,
+                csharp_qualified_name TEXT NOT NULL,
+                csharp_name TEXT NOT NULL,
+                csharp_label TEXT NOT NULL,
+                csharp_file_path TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_bridge_ns ON bridge_mappings(vb_import_namespace);
+            CREATE INDEX IF NOT EXISTS idx_bridge_label ON bridge_mappings(csharp_label);
             """;
         cmd.ExecuteNonQuery();
 
@@ -200,6 +213,24 @@ public sealed class SqliteStore : IDisposable
         cmd.CommandText = "INSERT INTO imports (file_id, namespace) VALUES (@fid, @ns)";
         cmd.Parameters.AddWithValue("@fid", fileId);
         cmd.Parameters.AddWithValue("@ns", ns);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void InsertBridgeMapping(string vbNamespace, long csharpNodeId, string csharpQn,
+        string csharpName, string csharpLabel, string? csharpFilePath)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO bridge_mappings
+                (vb_import_namespace, csharp_node_id, csharp_qualified_name, csharp_name, csharp_label, csharp_file_path)
+            VALUES (@ns, @nid, @qn, @name, @label, @path)
+            """;
+        cmd.Parameters.AddWithValue("@ns", vbNamespace);
+        cmd.Parameters.AddWithValue("@nid", csharpNodeId);
+        cmd.Parameters.AddWithValue("@qn", csharpQn);
+        cmd.Parameters.AddWithValue("@name", csharpName);
+        cmd.Parameters.AddWithValue("@label", csharpLabel);
+        cmd.Parameters.AddWithValue("@path", (object?)csharpFilePath ?? DBNull.Value);
         cmd.ExecuteNonQuery();
     }
 

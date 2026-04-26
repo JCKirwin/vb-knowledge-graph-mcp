@@ -519,6 +519,226 @@ public sealed class VbTools
         }
     }
 
+    [McpServerTool(Name = "bridge_vb_imports"), Description(
+        "Show the cross-language bridge for a VB.NET file or type. Lists which C# classes, interfaces, " +
+        "and enums from the configured sibling C# knowledge graph are accessible via the file's " +
+        "Imports statements. Requires --bridge-config to be set at server startup. " +
+        "Use this to understand VB.NET → C# dependencies.")]
+    public static string BridgeVbImports(
+        [Description("VB.NET file path (e.g., 'Web/loan/payment.aspx.vb') or type name (e.g., 'LoanPage')")] string target,
+        [Description("Optional: filter C# results by label (Class, Interface, Enum). Leave empty for all.")] string? csharpLabel = null,
+        [Description("Maximum results (default 50)")] int limit = 50)
+    {
+        if (ServerState.BridgeConfig?.IsUsable() != true)
+            return "Cross-language bridge is not configured. Pass `--bridge-config <path>` (or set VB_BRIDGE_CONFIG) at server startup. See README.md for the schema.";
+
+        var sb = new StringBuilder();
+        List<Dictionary<string, object?>> imports;
+
+        var fileResult = Store.Query(
+            "SELECT id FROM files WHERE path LIKE @pattern LIMIT 1",
+            ("@pattern", $"%{target}%"));
+
+        if (fileResult.Count > 0)
+        {
+            var fileId = (long)fileResult[0]["id"]!;
+            imports = Store.Query(
+                "SELECT DISTINCT namespace FROM imports WHERE file_id = @fid ORDER BY namespace",
+                ("@fid", fileId));
+            sb.AppendLine($"## Cross-Language Bridge: {target}");
+        }
+        else
+        {
+            var typeResult = Store.Query(
+                """
+                SELECT DISTINCT f.id, f.path FROM symbols s
+                JOIN files f ON f.id = s.file_id
+                WHERE (s.name = @name OR s.qualified_name = @name)
+                  AND s.kind IN ('Class','Module','Interface','Structure')
+                LIMIT 5
+                """, ("@name", target));
+
+            if (typeResult.Count == 0)
+                return $"No file or type found matching '{target}'.";
+
+            var fileIds = typeResult.Select(r => (long)r["id"]!).Distinct().ToList();
+            var idList = string.Join(",", fileIds);
+            imports = Store.Query(
+                $"SELECT DISTINCT namespace FROM imports WHERE file_id IN ({idList}) ORDER BY namespace");
+
+            var files = string.Join(", ", typeResult.Select(r => r["path"]));
+            sb.AppendLine($"## Cross-Language Bridge: {target}");
+            sb.AppendLine($"**Files:** {files}");
+        }
+
+        sb.AppendLine($"**VB.NET Imports:** {imports.Count} namespaces");
+        sb.AppendLine();
+
+        if (imports.Count == 0)
+        {
+            sb.AppendLine("No imports found for this target.");
+            return sb.ToString();
+        }
+
+        int totalMappings = 0;
+        foreach (var imp in imports)
+        {
+            var ns = (string)imp["namespace"]!;
+            var bridgeSql = """
+                SELECT csharp_name, csharp_label, csharp_file_path, csharp_qualified_name
+                FROM bridge_mappings
+                WHERE vb_import_namespace = @ns
+                """;
+            var parameters = new List<(string, object?)> { ("@ns", ns) };
+
+            if (!string.IsNullOrEmpty(csharpLabel))
+            {
+                bridgeSql += " AND csharp_label = @label";
+                parameters.Add(("@label", csharpLabel));
+            }
+            bridgeSql += " ORDER BY csharp_label, csharp_name LIMIT @limit";
+            parameters.Add(("@limit", limit));
+
+            var mappings = Store.Query(bridgeSql, parameters.ToArray());
+            if (mappings.Count > 0)
+            {
+                sb.AppendLine($"### `Imports {ns}` → {mappings.Count} C# types");
+                foreach (var m in mappings)
+                {
+                    sb.AppendLine($"- [{m["csharp_label"]}] **{m["csharp_name"]}** — {m["csharp_file_path"]}");
+                    totalMappings++;
+                }
+                sb.AppendLine();
+            }
+        }
+
+        if (totalMappings == 0)
+            sb.AppendLine("No C# graph mappings found for these imports. The sibling graph DB may need re-indexing.");
+        else
+            sb.AppendLine($"---\n**Total:** {totalMappings} C# types accessible from this VB.NET code");
+
+        return sb.ToString();
+    }
+
+    [McpServerTool(Name = "trace_vb_calls"), Description(
+        "Trace likely call chains from a VB.NET method or class into the bridged C# graph. " +
+        "Requires --bridge-config to be set at server startup.")]
+    public static string TraceVbCalls(
+        [Description("VB.NET method or class name (e.g., 'LoanPage.Page_Load', 'RepoLogic.Save')")] string name,
+        [Description("Maximum C# matches per symbol (default 20)")] int limit = 20)
+    {
+        if (ServerState.BridgeConfig?.IsUsable() != true)
+            return "Cross-language bridge is not configured. Pass `--bridge-config <path>` (or set VB_BRIDGE_CONFIG) at server startup.";
+
+        var sb = new StringBuilder();
+        var symbols = Store.Query(
+            """
+            SELECT s.id, s.kind, s.name, s.qualified_name, s.file_id, s.line_start, s.line_end, f.path
+            FROM symbols s JOIN files f ON f.id = s.file_id
+            WHERE (s.qualified_name = @name OR s.name = @name OR s.qualified_name LIKE @pattern)
+              AND s.kind IN ('Sub','Function','Class','Module')
+            ORDER BY s.kind, s.qualified_name
+            LIMIT 5
+            """, ("@name", name), ("@pattern", $"%.{name}"));
+
+        if (symbols.Count == 0)
+            return $"No VB.NET symbol found matching '{name}'.";
+
+        foreach (var sym in symbols)
+        {
+            var fileId = (long)sym["file_id"]!;
+            var filePath = (string)sym["path"]!;
+            var lineStart = Convert.ToInt32(sym["line_start"]!);
+            var lineEnd = Convert.ToInt32(sym["line_end"]!);
+
+            sb.AppendLine($"## {sym["kind"]} {sym["qualified_name"]}");
+            sb.AppendLine($"**File:** {filePath}:{lineStart}-{lineEnd}");
+            sb.AppendLine();
+
+            var bridgedImports = Store.Query(
+                """
+                SELECT DISTINCT i.namespace FROM imports i
+                INNER JOIN bridge_mappings b ON b.vb_import_namespace = i.namespace
+                WHERE i.file_id = @fid
+                ORDER BY i.namespace
+                """, ("@fid", fileId));
+
+            if (bridgedImports.Count == 0)
+            {
+                sb.AppendLine("No C# bridge imports found for this file.");
+                sb.AppendLine();
+                continue;
+            }
+
+            var fullPath = Path.Combine(RootPath, filePath.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(fullPath))
+            {
+                sb.AppendLine("Source file not found on disk.");
+                sb.AppendLine();
+                continue;
+            }
+
+            var lines = File.ReadLines(fullPath)
+                .Skip(lineStart - 1)
+                .Take(Math.Min(lineEnd - lineStart + 1, 200))
+                .ToList();
+            var sourceBlock = string.Join("\n", lines);
+
+            sb.AppendLine("### Cross-Language Calls");
+            int callsFound = 0;
+
+            foreach (var imp in bridgedImports)
+            {
+                var ns = (string)imp["namespace"]!;
+                var csharpTypes = Store.Query(
+                    """
+                    SELECT DISTINCT csharp_name, csharp_label, csharp_file_path, csharp_qualified_name
+                    FROM bridge_mappings
+                    WHERE vb_import_namespace = @ns AND csharp_label IN ('Class','Interface','Enum')
+                    ORDER BY csharp_name
+                    """, ("@ns", ns));
+
+                foreach (var cType in csharpTypes)
+                {
+                    var cName = (string)cType["csharp_name"]!;
+                    if (cName.Length >= 3 && sourceBlock.Contains(cName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        sb.AppendLine($"- **{cName}** [{cType["csharp_label"]}] from `Imports {ns}`");
+                        sb.AppendLine($"  C# source: {cType["csharp_file_path"]}");
+                        sb.AppendLine($"  Graph QN: `{cType["csharp_qualified_name"]}`");
+                        callsFound++;
+                        if (callsFound >= limit) break;
+                    }
+                }
+                if (callsFound >= limit) break;
+            }
+
+            if (callsFound == 0)
+                sb.AppendLine("No C# type references detected in the source code of this symbol.");
+            else
+                sb.AppendLine($"\n**{callsFound} cross-language references found.**");
+
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
+    [McpServerTool(Name = "rebuild_vb_bridge"), Description(
+        "Rebuild the cross-language bridge mappings against the configured sibling C# graph. " +
+        "Run after the sibling graph DB is re-indexed. No-op if --bridge-config is not set.")]
+    public static string RebuildVbBridge()
+    {
+        var cfg = ServerState.BridgeConfig;
+        if (cfg?.IsUsable() != true)
+            return "Bridge not configured — start the server with --bridge-config <path>.";
+
+        var bridge = new CSharpBridge(Store, cfg);
+        var r = bridge.BuildBridge();
+        if (r.Error != null) return $"Bridge error: {r.Error}";
+        return $"## Bridge Rebuilt\n\n- Namespaces: {r.DistinctImports}\n- Mappings: {r.MappingsCreated:N0}\n- Files with bridge: {r.FilesWithBridge:N0}";
+    }
+
     private static string EscapeFtsQuery(string query)
     {
         var words = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -537,4 +757,5 @@ public static class ServerState
 {
     public static SqliteStore? Store { get; set; }
     public static string RootPath { get; set; } = "";
+    public static BridgeConfig? BridgeConfig { get; set; }
 }
